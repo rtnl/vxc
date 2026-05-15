@@ -93,8 +93,8 @@ public:
     data.reserve(len);
 
     for (i32 i = 0; i < len; i++) {
-      rune r = 0;
-      u8   c = 0;
+      u32 r = 0;
+      u8  c = 0;
 
       const auto c_r = read_exact(&c, 1);
       if (c_r.is_err()) {
@@ -108,10 +108,10 @@ public:
         const auto b_r = read_exact(b, 3);
         if (b_r.is_err()) return ResultT::err(b_r.get_error());
 
-        const rune v_1 = c;
-        const rune v_2 = b[0];
-        const rune v_3 = b[1];
-        const rune v_4 = b[2];
+        const u32 v_1 = c;
+        const u32 v_2 = b[0];
+        const u32 v_3 = b[1];
+        const u32 v_4 = b[2];
 
         if ((v_2 & 0b11000000) != 0b10000000) return ErrInvalidContinuation;
         if ((v_3 & 0b11000000) != 0b10000000) return ErrInvalidContinuation;
@@ -130,9 +130,9 @@ public:
         const auto b_r = read_exact(b, 2);
         if (b_r.is_err()) return ResultT::err(b_r.get_error());
 
-        const rune v_1 = c;
-        const rune v_2 = b[0];
-        const rune v_3 = b[1];
+        const u32 v_1 = c;
+        const u32 v_2 = b[0];
+        const u32 v_3 = b[1];
 
         if ((v_2 & 0b11000000) != 0b10000000) return ErrInvalidContinuation;
         if ((v_3 & 0b11000000) != 0b10000000) return ErrInvalidContinuation;
@@ -149,8 +149,8 @@ public:
         const auto b_r = read_exact(b, 1);
         if (b_r.is_err()) return ResultT::err(b_r.get_error());
 
-        const rune v_1 = c;
-        const rune v_2 = b[0];
+        const u32 v_1 = c;
+        const u32 v_2 = b[0];
 
         if ((v_2 & 0b11000000) != 0b10000000) return ErrInvalidContinuation;
 
@@ -169,7 +169,7 @@ public:
         return ErrInvalidLeading;
       }
 
-      data.emplace_back(r);
+      data.emplace_back(rune(r));
     }
 
     return ResultT::ok(std::move(data));
