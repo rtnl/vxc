@@ -1,0 +1,8 @@
+[package]
+name = "vxc"
+version = "0.1.0"
+authors = ["77xt <77xt@proton.me>"]
+edition = "11"
+
+[dependencies]
+kinetic = {git = "https://github.com/rtnl/kinetic"}
