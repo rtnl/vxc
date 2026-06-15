@@ -4,22 +4,34 @@
 
 #include <cstdlib>
 #include <kinetic>
+#include <memory>
 
 // varint and varlong methods from https://minecraft.wiki/w/Java_Edition_protocol/Packets
 
 namespace vxc {
 
-class CraftStream : public kinetic::TcpStream {
+template <typename IO>
+class CraftStream : public kinetic::BufReader, public kinetic::Writer {
 private:
+  std::shared_ptr<IO> _io;
+
   static const i32 SEGMENT_BITS = 0x7F;
   static const i32 CONTINUE_BIT = 0x80;
 
 public:
-  CraftStream(const int fd)
-    : kinetic::TcpStream(fd)
+  CraftStream(const std::shared_ptr<IO> & io)
+    : _io(io)
   {}
 
   ~CraftStream() = default;
+
+  kinetic::Result<usize> read(u8 * buf, usize size) override {
+    return _io->read(buf, size);
+  }
+
+  kinetic::Result<usize> write(const u8 * buf, usize size) override {
+    return _io->write(buf, size);
+  }
 
   kinetic::Result<i32> read_varint() {
     using ResultT = kinetic::Result<i32>;
@@ -29,7 +41,7 @@ public:
     u8 currentByte;
 
     while (true) {
-      const auto read_r = read(&currentByte, 1);
+      const auto read_r = read_exact(&currentByte, 1);
       if (read_r.is_err()) {
         return ResultT::err(read_r.get_error());
       }
@@ -56,7 +68,7 @@ public:
     u8 currentByte;
 
     while (true) {
-      const auto read_r = read(&currentByte, 1);
+      const auto read_r = read_exact(&currentByte, 1);
       if (read_r.is_err()) {
         return ResultT::err(read_r.get_error());
       }
@@ -75,7 +87,41 @@ public:
     return ResultT::ok(value);
   }
 
-  kinetic::Result<std::vector<rune>> read_string() {
+  kinetic::Result<usize> write_varint(i32 value) {
+    while (true) {
+      if ((value & ~SEGMENT_BITS) == 0) {
+        const u8 value_byte = value;
+        return write_all(&value_byte, 1);
+      }
+
+      const u8 value_byte = (value & SEGMENT_BITS) | CONTINUE_BIT;
+      const auto res = write_all(&value_byte, 1);
+      if (res.is_err()) {
+        return res;
+      }
+
+      value >>= 7;
+    }
+  }
+
+  kinetic::Result<usize> write_varlong(i64 value) {
+    while (true) {
+      if ((value & ~((i64)SEGMENT_BITS)) == 0) {
+        const u8 value_byte = value;
+        return write_all(&value_byte, 1);
+      }
+
+      const u8 value_byte = (value & SEGMENT_BITS) | CONTINUE_BIT;
+      const auto res = write_all(&value_byte, 1);
+      if (res.is_err()) {
+        return res;
+      }
+
+      value >>= 7;
+    }
+  }
+
+  kinetic::Result<std::vector<rune>> read_string() noexcept {
     using ResultT = kinetic::Result<std::vector<rune>>;
 
     const auto ErrInvalidLeading      = ResultT::err(kinetic::ErrorKind::ValueInvalid, "invalid utf-8 leading byte");
@@ -175,8 +221,8 @@ public:
     return ResultT::ok(std::move(data));
   }
 
-  kinetic::Result<Packet> read_packet() {
-    using ResultT = kinetic::Result<Packet>;
+  kinetic::Result<u8> read_packet(Packet & packet) noexcept {
+    using ResultT = kinetic::Result<u8>;
 
     const auto p_len_r = read_varint();
     if (p_len_r.is_err()) {
@@ -184,25 +230,31 @@ public:
     }
     const auto p_len_v = p_len_r.unwrap();
 
-    const auto p_kind_r = read_varint();
-    if (p_kind_r.is_err()) {
-      return ResultT::err(p_kind_r.get_error());
-    }
-    const auto p_kind_v = p_kind_r.unwrap();
-
-    const usize p_data_len = p_len_v;
-    u8 * p_data_buf = (u8 *) ::malloc(p_data_len);
-    const auto p_data_r = read_exact(p_data_buf, p_data_len);
+    packet.set_len(usize(p_len_v));
+    const auto p_data_r = read_exact(packet.get_data().data(), p_len_v);
     if (p_data_r.is_err()) {
       return ResultT::err(p_data_r.get_error());
     }
-    std::vector<u8> p_data(p_data_buf, &p_data_buf[p_data_len]);
-    ::free(p_data_buf);
 
-    Packet packet(p_len_v, p_kind_v);
-    packet.push_data(p_data);
+    return ResultT::ok(1);
+  }
 
-    return kinetic::Result<Packet>::ok(packet);
+  kinetic::Result<usize> write_packet(const Packet & packet) noexcept {
+    using ResultT = kinetic::Result<usize>;
+
+    const i32 packet_len = packet.get_len();
+
+    const auto packet_len_r = write_varint(packet_len);
+    if (packet_len_r.is_err()) {
+      return packet_len_r;
+    }
+
+    const auto packet_body_r = write_all(packet.get_data().data(), packet_len);
+    if (packet_body_r.is_err()) {
+      return packet_body_r;
+    }
+
+    return ResultT::ok(0);
   }
 };
 
