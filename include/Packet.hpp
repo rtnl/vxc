@@ -14,8 +14,10 @@ private:
 public:
   explicit Packet()
     : _len(0)
-    , _data(1)
+    , _data(64)
   {}
+
+  ~Packet() = default;
 
   KINETIC_GETTER(_len, len)
 

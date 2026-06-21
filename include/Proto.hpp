@@ -121,7 +121,6 @@ public:
       return ResultT::err(p_len_r.get_error());
     }
     const auto p_len_v = p_len_r.unwrap();
-
     packet.set_len(usize(p_len_v));
     const auto p_data_r = _io->read_exact(packet.get_data().data(), p_len_v);
     if (p_data_r.is_err()) {
