@@ -5,6 +5,7 @@
 #include <atomic>
 #include <thread>
 #include <cassert>
+#include <condition_variable>
 
 #include "./Proto.hpp"
 #include "./Packet.hpp"
@@ -19,11 +20,11 @@ private:
 
   std::atomic_bool _flag_alive;
 
-  std::atomic_bool _flag_update;
-
   std::vector<Packet> _queue_inc;
 
   std::mutex _queue_inc_m;
+
+  std::condition_variable _queue_inc_c;
 
   Channel<Packet> _queue_out;
 
@@ -35,9 +36,9 @@ public:
   ) noexcept
     : _stream(stream)
     , _flag_alive(false)
-    , _flag_update(false)
     , _queue_inc()
     , _queue_inc_m()
+    , _queue_inc_c()
     , _queue_out(1024)
     , _result(kinetic::Result<kinetic::Unit>::err(kinetic::ErrorKind::ValueNotInitialized, ""))
   {
@@ -48,10 +49,6 @@ public:
 
   bool get_flag_alive() {
     return _flag_alive.load();
-  }
-
-  bool get_flag_update() {
-    return _flag_update.load();
   }
 
   void run() {
@@ -100,19 +97,22 @@ public:
   }
 
   void push_packet_inc(const Packet & packet) {
-    std::lock_guard<std::mutex> _lock(_queue_inc_m);
-
-    _queue_inc.emplace_back(packet);
-    _flag_update.store(true);
+    {
+      std::lock_guard<std::mutex> lock_queue_inc(_queue_inc_m);
+      _queue_inc.emplace_back(packet);
+    }
+    _queue_inc_c.notify_one();
   }
 
-  std::vector<Packet> get_packet_inc() {
-    std::lock_guard<std::mutex> _lock(_queue_inc_m);
+  std::vector<Packet> get_packet_inc(const usize) {
+    std::unique_lock<std::mutex> lock_queue_inc(_queue_inc_m);
+
+    _queue_inc_c.wait(lock_queue_inc);
 
     const std::vector<Packet> result = _queue_inc;
-
     _queue_inc.clear();
-    _flag_update.store(false);
+
+    lock_queue_inc.unlock();
 
     return result;
   }
