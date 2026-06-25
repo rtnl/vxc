@@ -6,10 +6,10 @@
 #include <thread>
 #include <cassert>
 #include <condition_variable>
+#include <chrono>
 
 #include "./Proto.hpp"
 #include "./Packet.hpp"
-#include "./Channel.hpp"
 
 namespace vxc {
 
@@ -20,13 +20,13 @@ private:
 
   std::atomic_bool _flag_alive;
 
-  std::vector<Packet> _queue_inc;
-
-  std::mutex _queue_inc_m;
-
+  std::vector<Packet>     _queue_inc;
+  std::mutex              _queue_inc_m;
   std::condition_variable _queue_inc_c;
 
-  Channel<Packet> _queue_out;
+  std::vector<Packet>     _queue_out;
+  std::mutex              _queue_out_m;
+  std::condition_variable _queue_out_c;
 
   kinetic::Result<kinetic::Unit> _result;
 
@@ -39,7 +39,9 @@ public:
     , _queue_inc()
     , _queue_inc_m()
     , _queue_inc_c()
-    , _queue_out(1024)
+    , _queue_out()
+    , _queue_out_m()
+    , _queue_out_c()
     , _result(kinetic::Result<kinetic::Unit>::err(kinetic::ErrorKind::ValueNotInitialized, ""))
   {
     assert(stream != nullptr);
@@ -56,12 +58,11 @@ public:
 
     auto thread_inc = std::thread([this]() {
       while (get_flag_alive()) {
-        Packet packet{};
-
+        auto packet = Packet{};
         const auto read_r = _stream->read_packet(packet);
         if (read_r.is_err()) {
           cancel(read_r.get_error());
-          return;
+          break;
         }
 
         push_packet_inc(packet);
@@ -71,12 +72,12 @@ public:
 
     auto thread_out = std::thread([this]() {
       while (get_flag_alive()) {
-        const Packet packet = _queue_out.recv();
-
-        const auto write_r = _stream->write_packet(packet);
-        if (write_r.is_err()) {
-          cancel(write_r.get_error());
-          return;
+        for (const auto & packet : get_packet_out()) {
+          const auto write_r = _stream->write_packet(packet);
+          if (write_r.is_err()) {
+            cancel(write_r.get_error());
+            break;
+          }
         }
       }
     });
@@ -87,7 +88,8 @@ public:
     _result = kinetic::Result<kinetic::Unit>::err(err);
     _flag_alive.store(false);
 
-    std::cerr << "cancel!" << std::endl;
+    _queue_inc_c.notify_all();
+    _queue_out_c.notify_all();
   }
 
   void wait() { // Todo: replace with lock
@@ -97,28 +99,39 @@ public:
   }
 
   void push_packet_inc(const Packet & packet) {
-    {
-      std::lock_guard<std::mutex> lock_queue_inc(_queue_inc_m);
-      _queue_inc.emplace_back(packet);
-    }
+    std::unique_lock<std::mutex> lock(_queue_inc_m);
+    _queue_inc.emplace_back(packet);
+    lock.unlock();
     _queue_inc_c.notify_one();
   }
 
-  std::vector<Packet> get_packet_inc(const usize) {
-    std::unique_lock<std::mutex> lock_queue_inc(_queue_inc_m);
-
-    _queue_inc_c.wait(lock_queue_inc);
+  std::vector<Packet> get_packet_inc(const bool take_empty = false, const usize l = 32) {
+    std::unique_lock<std::mutex> lock(_queue_inc_m);
+    _queue_inc_c.wait(lock, [this, take_empty]() { return take_empty || !this->_queue_inc.empty(); });
 
     const std::vector<Packet> result = _queue_inc;
     _queue_inc.clear();
 
-    lock_queue_inc.unlock();
-
+    lock.unlock();
     return result;
   }
 
   void push_packet_out(const Packet & packet) {
-    _queue_out.send(packet);
+    std::unique_lock<std::mutex> lock(_queue_out_m);
+    _queue_out.emplace_back(packet);
+    lock.unlock();
+    _queue_out_c.notify_one();
+  }
+
+  std::vector<Packet> get_packet_out(const bool take_empty = false, const usize l = 32) {
+    std::unique_lock<std::mutex> lock(_queue_out_m);
+    _queue_out_c.wait(lock, [this, take_empty]() { return take_empty || !this->_queue_out.empty(); });
+
+    const std::vector<Packet> result = _queue_out;
+    _queue_out.clear();
+
+    lock.unlock();
+    return result;
   }
 };
 
