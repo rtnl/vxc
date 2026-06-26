@@ -44,6 +44,8 @@ static std::string Debug(const vxc::Packet & packet) {
   std::ostringstream ss;
 
   ss << "Packet(";
+  ss << ";len=" << packet.get_len();
+  ss << ";data=["; for (const auto b : packet.get_data()) { ss << " " << int(b); }; ss << "]";
   ss << ")";
 
   return ss.str();

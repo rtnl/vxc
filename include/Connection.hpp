@@ -6,7 +6,6 @@
 #include <thread>
 #include <cassert>
 #include <condition_variable>
-#include <chrono>
 
 #include "./Proto.hpp"
 #include "./Packet.hpp"
@@ -57,15 +56,16 @@ public:
     _flag_alive.store(true);
 
     auto thread_inc = std::thread([this]() {
+      Packet packet_read;
+
       while (get_flag_alive()) {
-        auto packet = Packet{};
-        const auto read_r = _stream->read_packet(packet);
+        const auto read_r = _stream->read_packet(packet_read);
         if (read_r.is_err()) {
           cancel(read_r.get_error());
           break;
         }
 
-        push_packet_inc(packet);
+        push_packet_inc(packet_read);
       }
     });
     thread_inc.detach();
@@ -76,7 +76,7 @@ public:
           const auto write_r = _stream->write_packet(packet);
           if (write_r.is_err()) {
             cancel(write_r.get_error());
-            break;
+            return;
           }
         }
       }
@@ -90,12 +90,6 @@ public:
 
     _queue_inc_c.notify_all();
     _queue_out_c.notify_all();
-  }
-
-  void wait() { // Todo: replace with lock
-    while (_flag_alive.load()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    }
   }
 
   void push_packet_inc(const Packet & packet) {
